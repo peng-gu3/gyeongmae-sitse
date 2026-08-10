@@ -100,7 +100,12 @@ function ItemSearch({ date }) {
     setRows(next[next.length - 1]?.children || []);
   };
 
-  const filters = { lclsf: path[0]?.code, mclsf: path[1]?.code, sclsf: path[2]?.code };
+  const filters = {
+    lclsf: path[0]?.code,
+    mclsf: path[1]?.code,
+    sclsf: path[2]?.code,
+    includeUnclassified: path[2]?.includeUnclassified ? "1" : "",
+  };
   if (showResults) return <TradeResults guided date={date} filters={filters} title={path.map((x) => x.name).join(" → ")} onBack={() => setShowResults(false)} />;
   return (
     <section>
