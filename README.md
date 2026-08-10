@@ -1,25 +1,16 @@
-# 농수산 경매시세 (gyeongmae-sitse)
+# 농수산물 경매시세
 
-전국 공영도매시장 실시간 경매 낙찰가를 폰에서 보는 앱.
+전국 공영도매시장 경매 자료를 품목 또는 출하지(보낸 곳)로 검색하는 모바일 웹앱입니다.
 
-## 배포 순서 (한 번만)
+## 정확한 전체 조회
 
-### 1. GitHub에 올리기
-1. github.com → 우측 상단 [+] → New repository
-2. Repository name: `gyeongmae-sitse` → Create
-3. 만들어진 페이지에서 "uploading an existing file" 클릭
-4. 이 폴더 안의 **모든 파일**을 드래그해서 올림 (node_modules 폴더는 빼고)
-5. 아래 [Commit changes] 클릭
+- 공공데이터 API의 실제 응답 상한인 1,000건을 기준으로 페이지 수를 계산합니다.
+- `totalCount`의 마지막 페이지까지 모두 받은 후 검색·시장·법인·규격 건수를 집계합니다.
+- 페이지 요청 실패 시 일부 결과를 정상 결과로 반환하지 않고 오류를 표시합니다.
 
-### 2. Vercel에서 배포
-1. vercel.com → [Add New] → [Project]
-2. 방금 만든 gyeongmae-sitse 저장소 옆 [Import] 클릭
-3. **Environment Variables** 열고 아래 입력 후 [Add]:
-   - Name(이름):  DATA_GO_KR_KEY
-   - Value(값):   (data.go.kr 인증키)
-4. [Deploy] 클릭 → 1~2분 기다리면 완료
-5. 나오는 주소(gyeongmae-sitse.vercel.app)를 부모님께 카톡으로 전송
+## 배포
 
-## 인증키 재발급 (권장)
-연동 후 data.go.kr 마이페이지에서 인증키를 새로 발급받고,
-Vercel의 DATA_GO_KR_KEY 값도 새 키로 교체하세요.
+1. 이 폴더 전체를 새 GitHub 저장소에 올립니다. (`node_modules`, `dist` 제외)
+2. Vercel에서 저장소를 Import합니다.
+3. Environment Variables에 `DATA_GO_KR_KEY`를 등록합니다.
+4. Production으로 배포합니다.

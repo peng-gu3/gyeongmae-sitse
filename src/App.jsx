@@ -1,353 +1,121 @@
-import React, { useState, useEffect } from "react";
-import { ChevronRight, ChevronLeft, Gavel, Search as SearchIcon, Loader2, Send } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-const won = (n) => Number(n || 0).toLocaleString("ko-KR");
-const kstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+const today = () => new Date(Date.now() + 32400000).toISOString().slice(0, 10);
+const number = (value) => Number(value || 0).toLocaleString("ko-KR");
 
 export default function App() {
-  const [date, setDate] = useState(kstToday());
-  const [tab, setTab] = useState("item"); // item(품목별) | origin(보낸곳별)
-
+  const [date, setDate] = useState(today());
+  const [mode, setMode] = useState("origin");
   return (
-    <div className="min-h-screen w-full bg-stone-950 text-stone-100 flex justify-center" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <div className="w-full max-w-md min-h-screen relative pb-4">
-        <div className="sticky top-0 z-20 bg-emerald-900">
-          <div className="px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Gavel size={20} className="text-emerald-300" />
-              <span className="text-lg font-bold">농수산 경매시세</span>
-            </div>
-            <input type="date" value={date} max={kstToday()} onChange={(e) => setDate(e.target.value)}
-              className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none" />
-          </div>
-          <div className="flex">
-            {[["item", "품목별"], ["origin", "보낸 곳별"]].map(([k, label]) => (
-              <button key={k} onClick={() => setTab(k)}
-                className={`flex-1 py-2.5 text-base font-bold border-b-2 ${tab === k ? "border-emerald-300 text-white" : "border-transparent text-emerald-200/60"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {tab === "item" ? <ItemTab date={date} /> : <OriginTab date={date} />}
-      </div>
-    </div>
+    <main className="app-shell">
+      <header>
+        <div className="brand"><span>🌿</span><div><strong>농수산물 경매시세</strong><small>전국 도매시장 실시간 조회</small></div></div>
+        <label className="date"><span>날짜</span><input type="date" value={date} max={today()} onChange={(e) => setDate(e.target.value)} /></label>
+      </header>
+      <nav className="tabs" aria-label="검색 방식">
+        <button className={mode === "origin" ? "active" : ""} onClick={() => setMode("origin")}>보낸 곳 검색</button>
+        <button className={mode === "item" ? "active" : ""} onClick={() => setMode("item")}>품목별 검색</button>
+      </nav>
+      {mode === "origin" ? <OriginSearch date={date} /> : <ItemSearch date={date} />}
+    </main>
   );
 }
 
-/* ============ 품목별 탭 ============ */
-function ItemTab({ date }) {
-  const [tree, setTree] = useState(null);
-  const [treeErr, setTreeErr] = useState("");
-  const [treeLoading, setTreeLoading] = useState(true);
-  const [sel, setSel] = useState({});
-  const [screen, setScreen] = useState("catL1");
-  const [q, setQ] = useState("");
+function OriginSearch({ date }) {
+  const [input, setInput] = useState("");
+  const [query, setQuery] = useState("");
+  const run = () => input.trim() && setQuery(input.trim());
+  return (
+    <section>
+      <div className="search-card">
+        <h1>농산물을 보낸 곳을 찾아보세요</h1>
+        <p>시·군 이름 일부만 입력해도 됩니다. 예: 밀양, 금산, 제주</p>
+        <div className="search-box">
+          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="보낸 곳 입력" />
+          <button onClick={run} disabled={!input.trim()}>검색</button>
+        </div>
+      </div>
+      {query ? <TradeResults key={`${date}-${query}`} date={date} filters={{ origin: query }} title={`“${query}”에서 보낸 경매 내역`} /> : <Empty icon="📦" text="보낸 곳을 입력하면 전국 도매시장 경매 내역을 모두 찾습니다." />}
+    </section>
+  );
+}
+
+function ItemSearch({ date }) {
+  const [categories, setCategories] = useState([]);
+  const [path, setPath] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showResults, setShowResults] = useState(false);
 
   useEffect(() => {
-    let alive = true; setTreeLoading(true); setTreeErr("");
-    fetch(`/api/tree?date=${date}`)
-      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((j) => { if (alive) { setTree(j.tree || []); if (!j.tree?.length) setTreeErr("이 날짜에는 데이터가 없습니다."); } })
-      .catch(() => alive && setTreeErr("데이터를 불러오지 못했습니다. 새로고침 해주세요."))
-      .finally(() => alive && setTreeLoading(false));
-    setSel({}); setScreen("catL1"); setQ("");
-    return () => { alive = false; };
+    const controller = new AbortController();
+    setLoading(true); setError(""); setPath([]); setShowResults(false);
+    fetch(`/api/categories?date=${encodeURIComponent(date)}`, { signal: controller.signal })
+      .then(readJson).then((data) => setCategories(data.categories || []))
+      .catch((e) => e.name !== "AbortError" && setError(e.message))
+      .finally(() => setLoading(false));
+    return () => controller.abort();
   }, [date]);
 
-  const node1 = tree?.find((l) => l.nm === sel.lclsfNm);        // 대분류
-  const node2 = node1?.ch?.find((m) => m.nm === sel.mclsfNm);   // 중분류
-  const goResult = (extra = {}) => { setSel((s) => ({ ...s, ...extra })); setScreen("result"); };
-
-  if (treeLoading) return <Loading msg="전국 도매시장 분류를 준비 중…" />;
-  if (treeErr) return <div className="text-center text-stone-400 py-20 px-6">{treeErr}</div>;
-
+  const rows = useMemo(() => path.reduce((items, chosen) => items.find((x) => x.code === chosen.code)?.children || [], categories), [categories, path]);
+  const filters = { lclsf: path[0]?.code, mclsf: path[1]?.code, sclsf: path[2]?.code };
+  if (showResults) return <TradeResults date={date} filters={filters} title={path.map((x) => x.name).join(" → ")} onBack={() => setShowResults(false)} />;
   return (
-    <>
-      {screen === "catL1" && (
-        <CatList title="분류를 고르세요" crumb="" rows={filterRows(tree, q)} q={q} setQ={setQ}
-          onPick={(l) => { setSel({ lclsf: l.cd, lclsfNm: l.nm }); setScreen("catL2"); setQ(""); }} />
-      )}
-      {screen === "catL2" && node1 && (
-        <CatList title="품목을 고르세요" crumb={sel.lclsfNm} rows={filterRows(node1.ch, q)} q={q} setQ={setQ}
-          onBack={() => { setScreen("catL1"); setQ(""); }}
-          onPick={(m) => { setSel((v) => ({ ...v, mclsf: m.cd, mclsfNm: m.nm, sclsf: undefined, sclsfNm: undefined, market: undefined, corp: undefined })); setScreen("catL3"); setQ(""); }}
-          onSearch={() => goResult()} />
-      )}
-      {screen === "catL3" && node2 && (
-        <CatList title="품종을 고르세요" crumb={`${sel.lclsfNm} › ${sel.mclsfNm}`}
-          rows={[{ nm: "전체(품종 무관)", n: node2.n, all: true }, ...node2.ch]}
-          onBack={() => setScreen("catL2")}
-          onPick={(s) => { setSel((v) => ({ ...v, sclsf: s.all ? undefined : s.cd, sclsfNm: s.all ? undefined : s.nm, market: undefined, corp: undefined })); setScreen("market"); }}
-          onSearch={() => goResult()} />
-      )}
-      {screen === "market" && (
-        <FacetList kind="market" date={date} sel={sel} crumb={crumb(sel)} onBack={() => setScreen("catL3")}
-          onPick={(m) => { setSel((s) => ({ ...s, market: m.all ? undefined : m.nm, corp: undefined })); setScreen(m.all ? "result" : "corp"); }}
-          onSearch={() => goResult()} />
-      )}
-      {screen === "corp" && (
-        <FacetList kind="corp" date={date} sel={sel} crumb={crumb(sel)} onBack={() => setScreen("market")}
-          onPick={(c) => goResult({ corp: c.all ? undefined : c.nm })} onSearch={() => goResult()} />
-      )}
-      {screen === "result" && (
-        <Result date={date} sel={sel} setSel={setSel} onBack={() => setScreen(sel.market ? "corp" : "market")} />
-      )}
-    </>
+    <section>
+      <div className="crumb">{path.length ? path.map((x) => x.name).join(" → ") : "품목 대분류를 선택하세요"}</div>
+      {path.length > 0 && <button className="back" onClick={() => setPath((x) => x.slice(0, -1))}>← 이전 단계</button>}
+      {loading && <Loading text="전국 분류와 건수를 불러오는 중입니다" />}
+      {error && <ErrorBox message={error} />}
+      {!loading && !error && <div className="rows">{rows.map((row) => <button className="row" key={`${row.code}-${row.name}`} onClick={() => row.children.length ? setPath((x) => [...x, row]) : (setPath((x) => [...x, row]), setShowResults(true))}><strong>{row.name}</strong><span>{number(row.count)}건　›</span></button>)}</div>}
+      {!loading && path.length > 0 && <div className="sticky-action"><button onClick={() => setShowResults(true)}>선택한 조건으로 검색</button></div>}
+    </section>
   );
 }
 
-/* ============ 보낸 곳별 탭 ============ */
-function OriginTab({ date }) {
-  const [origin, setOrigin] = useState("");
-  const [submitted, setSubmitted] = useState("");
-  const [sel, setSel] = useState({}); // {item, market, unit}
+function TradeResults({ date, filters, title, onBack }) {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(0);
-  const [list, setList] = useState([]);
-  const size = 50;
-
-  useEffect(() => { setPage(0); setList([]); }, [submitted, sel.item, sel.market, sel.unit, date]);
-
-  useEffect(() => {
-    if (!submitted) return;
-    let alive = true; setLoading(true);
-    fetch(`/api/origin?${qs({ date, origin: submitted, ...sel, size, page })}`)
-      .then((r) => r.json())
-      .then((j) => { if (!alive) return; setData(j); setList((prev) => page === 0 ? (j.list || []) : [...prev, ...(j.list || [])]); })
-      .catch(() => alive && setData({ error: true }))
-      .finally(() => alive && setLoading(false));
-    return () => { alive = false; };
-  }, [submitted, date, sel.item, sel.market, sel.unit, page]);
-
-  const s = data?.summary;
-  const totalPages = data ? Math.ceil((data.count || 0) / size) : 1;
-  const toggle = (key, val) => setSel((v) => ({ ...v, [key]: v[key] === val ? undefined : val }));
-  const run = () => { setSel({}); setSubmitted(origin.trim()); };
-
-  return (
-    <div className="pb-6">
-      <div className="p-3 border-b border-stone-800">
-        <div className="flex items-center gap-2 bg-stone-800 rounded-lg px-3 py-2.5">
-          <Send size={18} className="text-emerald-400" />
-          <input value={origin} onChange={(e) => setOrigin(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && run()}
-            placeholder="보낸 곳 입력 (예: 논산, 제주, 밀양)"
-            className="flex-1 bg-transparent text-base outline-none placeholder:text-stone-500" />
-        </div>
-        <button onClick={run} disabled={!origin.trim()}
-          className="mt-2 w-full bg-emerald-600 disabled:bg-stone-700 text-white text-base font-bold py-3 rounded-full">
-          이 곳에서 보낸 것 찾기
-        </button>
-        <p className="text-xs text-stone-500 mt-2">전국을 훑어서 찾습니다. 처음 조회는 몇 초 걸릴 수 있어요.</p>
-      </div>
-
-      {!submitted && <div className="text-center text-stone-500 py-20 px-6">보낸 곳을 입력하고 검색하세요.<br />예) "논산" → 논산에서 보낸 모든 품목</div>}
-
-      {submitted && (
-        <>
-          <div className="bg-stone-800 text-stone-300 text-sm px-4 py-2">
-            보낸 곳: <b className="text-white">{submitted}</b>{data ? ` · ${won(data.count)}건` : " · 조회 중…"}
-          </div>
-          {data?.items?.length > 1 && <ChipRow label="품목" items={data.items} active={sel.item} onTap={(v) => toggle("item", v)} />}
-          {data?.markets?.length > 1 && <ChipRow label="도매시장" items={data.markets} active={sel.market} onTap={(v) => toggle("market", v)} />}
-          {data?.units?.length > 1 && <ChipRow label="규격" items={data.units} active={sel.unit} onTap={(v) => toggle("unit", v)} />}
-
-          <div className="divide-y divide-stone-800">
-            {list.map((r, i) => <ResultItem key={i} r={r} />)}
-          </div>
-
-          {loading && <div className="flex justify-center py-6"><Loader2 className="animate-spin text-stone-500" /></div>}
-          {!loading && !list.length && <div className="text-center text-stone-500 py-16">"{submitted}"에서 보낸 낙찰이 없습니다.</div>}
-          {!loading && page + 1 < totalPages && (
-            <div className="px-4 py-3">
-              <button onClick={() => setPage((p) => p + 1)} className="w-full bg-emerald-700 text-white font-bold py-3 rounded-full">
-                더 불러오기 ({page + 1}/{totalPages} 페이지)
-              </button>
-            </div>
-          )}
-          {s && s.n > 0 && <Summary s={s} />}
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ============ 공통 ============ */
-function crumb(s) { return [s.lclsfNm, s.mclsfNm, s.sclsfNm, s.market, s.corp].filter(Boolean).join(" › "); }
-function filterRows(rows, q) { return q.trim() ? rows.filter((r) => r.nm.includes(q.trim())) : rows; }
-
-function Loading({ msg }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-stone-400">
-      <Loader2 className="animate-spin mb-3" size={28} />
-      <p className="text-base">{msg}</p>
-      <p className="text-sm mt-1">처음 한 번만 몇 초 걸려요.</p>
-    </div>
-  );
-}
-function SearchBtn({ onSearch }) {
-  if (!onSearch) return null;
-  return (
-    <div className="sticky bottom-0 p-3 bg-gradient-to-t from-stone-950 to-transparent">
-      <button onClick={onSearch} className="w-full bg-emerald-600 text-white text-lg font-bold py-3.5 rounded-full active:scale-[0.99]">
-        선택한 조건으로 검색
-      </button>
-    </div>
-  );
-}
-function Row({ nm, n, onClick, bold }) {
-  return (
-    <button onClick={onClick} className="w-full flex items-center justify-between px-4 py-4 border-b border-stone-800 active:bg-stone-900">
-      <span className={`text-lg ${bold ? "font-bold" : "font-semibold"}`}>{nm}</span>
-      <span className="flex items-center gap-1 text-stone-400 text-base">{won(n)}건 <ChevronRight size={18} /></span>
-    </button>
-  );
-}
-function TopBar({ crumb, onBack }) {
-  return (
-    <div className="flex items-center gap-2 px-3 py-2 border-b border-stone-800">
-      {onBack && <button onClick={onBack} className="p-1 text-stone-300"><ChevronLeft size={24} /></button>}
-      <span className="text-sm text-stone-400 truncate">{crumb || "전체"}</span>
-    </div>
-  );
-}
-function CatList({ title, crumb, rows, q, setQ, onPick, onBack, onSearch }) {
-  return (
-    <div className="pb-24">
-      <TopBar crumb={crumb} onBack={onBack} />
-      <div className="px-4 pt-3 pb-2 text-base font-bold text-emerald-300">{title}</div>
-      {setQ && (
-        <div className="mx-4 mb-2 flex items-center gap-2 bg-stone-800 rounded-lg px-3 py-2">
-          <SearchIcon size={16} className="text-stone-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름으로 찾기"
-            className="flex-1 bg-transparent text-base outline-none placeholder:text-stone-500" />
-        </div>
-      )}
-      {rows.map((r) => <Row key={r.nm} nm={r.nm} n={r.n} bold={r.all} onClick={() => onPick(r)} />)}
-      {!rows.length && <div className="text-center text-stone-500 py-16">결과가 없습니다.</div>}
-      <SearchBtn onSearch={onSearch} />
-    </div>
-  );
-}
-function FacetList({ kind, date, sel, crumb, onBack, onPick, onSearch }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let alive = true; setLoading(true);
-    fetch(`/api/list?${qs({ date, ...sel, size: 10, page: 0 })}`)
-      .then((r) => r.json()).then((j) => alive && setData(j))
-      .catch(() => alive && setData({ error: true })).finally(() => alive && setLoading(false));
-    return () => { alive = false; };
-  }, [date, sel.lclsf, sel.mclsf, sel.sclsf, sel.market]);
-
-  const listArr = kind === "market" ? data?.markets : data?.corps;
-  const allLabel = kind === "market" ? "전체 도매시장" : "전체 법인";
-  const allN = sum(listArr);
-  return (
-    <div className="pb-24">
-      <TopBar crumb={crumb} onBack={onBack} />
-      <div className="px-4 pt-3 pb-2 text-base font-bold text-emerald-300">{kind === "market" ? "도매시장을 고르세요" : "도매법인을 고르세요"}</div>
-      {loading && <div className="flex justify-center py-16"><Loader2 className="animate-spin text-stone-500" /></div>}
-      {!loading && (
-        <>
-          <Row nm={allLabel} n={allN} bold onClick={() => onPick({ all: true })} />
-          {(listArr || []).map((r) => <Row key={r.nm} nm={r.nm} n={r.n} onClick={() => onPick(r)} />)}
-          {!listArr?.length && <div className="text-center text-stone-500 py-16">해당 조건 데이터가 없습니다.</div>}
-        </>
-      )}
-      <SearchBtn onSearch={onSearch} />
-    </div>
-  );
-}
-function Result({ date, sel, setSel, onBack }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(0);
   const [items, setItems] = useState([]);
-  const size = 50;
-  useEffect(() => { setPage(0); setItems([]); }, [sel.origin, sel.unit, sel.market, sel.corp, sel.sclsf, sel.mclsf, date]);
-  useEffect(() => {
-    let alive = true; setLoading(true);
-    fetch(`/api/list?${qs({ date, ...sel, size, page })}`)
-      .then((r) => r.json())
-      .then((j) => { if (!alive) return; setData(j); setItems((prev) => page === 0 ? (j.items || []) : [...prev, ...(j.items || [])]); })
-      .catch(() => alive && setData({ error: true })).finally(() => alive && setLoading(false));
-    return () => { alive = false; };
-  }, [date, sel.lclsf, sel.mclsf, sel.sclsf, sel.market, sel.corp, sel.origin, sel.unit, page]);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState({ market: "", corp: "", unit: "" });
 
-  const s = data?.summary;
-  const totalPages = data ? Math.ceil((data.count || 0) / size) : 1;
-  const toggle = (key, val) => setSel((v) => ({ ...v, [key]: v[key] === val ? undefined : val }));
+  useEffect(() => { setPage(0); setItems([]); }, [date, JSON.stringify(filters), selected.market, selected.corp, selected.unit]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true); setError("");
+    const params = new URLSearchParams({ date, page: String(page), size: "50" });
+    for (const [key, value] of Object.entries({ ...filters, ...selected })) if (value) params.set(key, value);
+    fetch(`/api/trades?${params}`, { signal: controller.signal }).then(readJson)
+      .then((result) => { setData(result); setItems((old) => page ? [...old, ...(result.trades || [])] : result.trades || []); })
+      .catch((e) => e.name !== "AbortError" && setError(e.message)).finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [date, JSON.stringify(filters), selected.market, selected.corp, selected.unit, page]);
+
+  const choose = (key, value) => setSelected((old) => ({ ...old, [key]: old[key] === value ? "" : value, ...(key === "market" ? { corp: "" } : {}) }));
   return (
-    <div className="pb-6">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-stone-800">
-        <button onClick={onBack} className="p-1 text-stone-300"><ChevronLeft size={24} /></button>
-        <span className="text-base font-bold">{data ? `${won(data.count)}건` : "…"}</span>
-      </div>
-      <div className="bg-stone-800 text-stone-300 text-sm px-4 py-2">분류: {crumb(sel)}</div>
-      {data?.origins?.length > 1 && <ChipRow label="보낸 곳" items={data.origins} active={sel.origin} onTap={(v) => toggle("origin", v)} />}
-      {data?.units?.length > 1 && <ChipRow label="규격" items={data.units} active={sel.unit} onTap={(v) => toggle("unit", v)} />}
-      <div className="divide-y divide-stone-800">{items.map((r, i) => <ResultItem key={i} r={r} />)}</div>
-      {loading && <div className="flex justify-center py-6"><Loader2 className="animate-spin text-stone-500" /></div>}
-      {!loading && !items.length && <div className="text-center text-stone-500 py-16">조건에 맞는 낙찰이 없습니다.</div>}
-      {!loading && page + 1 < totalPages && (
-        <div className="px-4 py-3">
-          <button onClick={() => setPage((p) => p + 1)} className="w-full bg-emerald-700 text-white font-bold py-3 rounded-full">
-            더 불러오기 ({page + 1}/{totalPages} 페이지)
-          </button>
-        </div>
-      )}
-      {s && s.n > 0 && <Summary s={s} />}
-    </div>
+    <section>
+      <div className="result-head">{onBack && <button onClick={onBack}>←</button>}<div><h1>{title}</h1><p>{data ? `전체 ${number(data.count)}건` : "전체 자료 조회 중"}</p></div></div>
+      {data && <>
+        <Chips label="도매시장" values={data.markets} active={selected.market} onClick={(x) => choose("market", x)} />
+        <Chips label="법인·청과" values={data.corps} active={selected.corp} onClick={(x) => choose("corp", x)} />
+        <Chips label="규격" values={data.units} active={selected.unit} onClick={(x) => choose("unit", x)} />
+      </>}
+      {error && <ErrorBox message={error} />}
+      <div className="trades">{items.map((trade, index) => <article className="trade" key={`${trade.datetime}-${index}`}><h2>{index + 1}. {trade.item} <em>{trade.variety}</em></h2><p>경락가: <b>{number(trade.price)}원</b>　수량: <strong>{number(trade.quantity)}건</strong></p><p>규격: <strong>{trade.unit || "-"}</strong>　출하지: <strong>{trade.origin || "-"}</strong></p><p>{trade.market} · {trade.corp}</p><time>경매시간: {trade.datetime || trade.time}</time></article>)}</div>
+      {loading && <Loading text="빠진 페이지 없이 전체 자료를 확인하는 중입니다" />}
+      {!loading && !error && data?.count === 0 && <Empty icon="🔎" text="선택한 조건의 경매 내역이 없습니다." />}
+      {!loading && items.length < (data?.count || 0) && <div className="load-more"><button onClick={() => setPage((x) => x + 1)}>더 불러오기 ({items.length}/{number(data.count)}건)</button></div>}
+      {data?.count > 0 && <footer>총 {number(data.count)}건 · 건당 평균가 {number(data.averagePrice)}원</footer>}
+    </section>
   );
 }
-function ResultItem({ r }) {
-  return (
-    <div className="px-4 py-3">
-      <div className="flex justify-between items-start">
-        <div className="font-bold text-base">{r.item} <span className="text-emerald-300 text-sm">{r.vrty}</span></div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-red-400 tabular-nums">{won(r.price)}원</div>
-          {r.kgPrice > 0 && <div className="text-xs text-stone-500">kg당 {won(r.kgPrice)}원</div>}
-        </div>
-      </div>
-      <div className="text-sm text-stone-400 mt-1">규격 {r.unit} · 수량 {won(r.qty)}건 · {r.trdSe}</div>
-      <div className="text-sm text-stone-400">보낸 곳 {r.origin || "-"} · {r.mkt} {r.corp}</div>
-      <div className="text-xs text-stone-500 mt-0.5">{r.t} 낙찰</div>
-    </div>
-  );
+
+function Chips({ label, values = [], active, onClick }) {
+  if (values.length < 2) return null;
+  return <div className="chip-group"><small>{label}</small><div>{values.slice(0, 30).map((x) => <button className={active === x.name ? "active" : ""} key={x.name} onClick={() => onClick(x.name)}>{x.name} ({number(x.count)})</button>)}</div></div>;
 }
-function Summary({ s }) {
-  return (
-    <div className="mx-4 mt-2 mb-4 bg-stone-900 rounded-xl p-4 text-center">
-      <div className="text-sm text-stone-400">총 {won(s.n)}건</div>
-      <div className="text-base mt-1">건당 평균 <b className="text-white">{won(s.avg)}원</b>
-        {s.kgAvg > 0 && <> · kg당 평균 <b className="text-white">{won(s.kgAvg)}원</b></>}
-      </div>
-    </div>
-  );
-}
-function ChipRow({ label, items, active, onTap }) {
-  return (
-    <div className="px-3 py-2 border-b border-stone-800">
-      <div className="text-xs text-stone-500 mb-1.5">{label}</div>
-      <div className="flex gap-2 overflow-x-auto">
-        {items.slice(0, 20).map((it) => (
-          <button key={it.nm} onClick={() => onTap(it.nm)}
-            className={`px-3 py-1.5 rounded-full text-sm whitespace-nowrap border ${active === it.nm ? "bg-emerald-600 border-emerald-600 text-white" : "border-stone-700 text-stone-300"}`}>
-            {it.nm} ({won(it.n)})
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-function qs(o) {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== "" && !k.endsWith("Nm")) p.set(k, v);
-  return p.toString();
-}
-function sum(arr) { return (arr || []).reduce((a, b) => a + b.n, 0); }
+function Loading({ text }) { return <div className="loading"><span></span><p>{text}</p><small>자료가 많으면 잠시 걸릴 수 있습니다.</small></div>; }
+function Empty({ icon, text }) { return <div className="empty"><b>{icon}</b><p>{text}</p></div>; }
+function ErrorBox({ message }) { return <div className="error"><strong>자료를 불러오지 못했습니다.</strong><p>{message}</p><small>페이지를 새로고침하거나 잠시 후 다시 시도해 주세요.</small></div>; }
+async function readJson(response) { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `서버 오류 ${response.status}`); return data; }

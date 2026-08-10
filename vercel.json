@@ -1,3 +1,7 @@
 {
-  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/$1" }]
+  "framework": "vite",
+  "functions": {
+    "api/categories.js": { "maxDuration": 60 },
+    "api/trades.js": { "maxDuration": 60 }
+  }
 }
