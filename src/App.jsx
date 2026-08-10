@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const today = () => new Date(Date.now() + 32400000).toISOString().slice(0, 10);
 const number = (value) => Number(value || 0).toLocaleString("ko-KR");
+const LARGE_CATEGORY_NAMES = [
+  "과실류", "과일과채류", "과채류", "관엽식물류", "근채류", "농림가공",
+  "농산물종자류", "두류", "버섯류", "산채류", "서류", "수산가공",
+  "수실류", "신선 해조류", "약용작물류", "양채류", "엽경채류", "잡곡류",
+  "조미채소류", "초화류", "특용작물류", "활 해면어류",
+];
+const LARGE_CATEGORIES = LARGE_CATEGORY_NAMES.map((name) => ({ name, code: "", count: null, children: [] }));
 
 export default function App() {
   const [date, setDate] = useState(today());
@@ -41,47 +48,67 @@ function OriginSearch({ date }) {
 }
 
 function ItemSearch({ date }) {
-  const [categories, setCategories] = useState([]);
+  const [rows, setRows] = useState(LARGE_CATEGORIES);
   const [path, setPath] = useState([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const cacheKey = `auction-categories:${date}`;
-    let hasCache = false;
-    try {
-      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
-      if (cached?.categories?.length) {
-        setCategories(cached.categories);
-        setLoading(false);
-        hasCache = true;
-      }
-    } catch { /* ignore an invalid browser cache */ }
-    if (!hasCache) setLoading(true);
-    setError(""); setPath([]); setShowResults(false);
-    fetch(`/api/categories?date=${encodeURIComponent(date)}`, { signal: controller.signal })
-      .then(readJson).then((data) => {
-        const nextCategories = data.categories || [];
-        setCategories(nextCategories);
-        try { localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), categories: nextCategories })); } catch { /* storage can be unavailable */ }
-      })
-      .catch((e) => e.name !== "AbortError" && !hasCache && setError(e.message))
-      .finally(() => { if (!hasCache) setLoading(false); });
-    return () => controller.abort();
+    setRows(LARGE_CATEGORIES);
+    setPath([]);
+    setShowResults(false);
+    setError("");
+    setLoading(false);
   }, [date]);
 
-  const rows = useMemo(() => path.reduce((items, chosen) => items.find((x) => x.code === chosen.code)?.children || [], categories), [categories, path]);
+  const pick = async (row) => {
+    if (path.length === 0) {
+      setLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ date, lclsfName: row.name });
+        const data = await fetch(`/api/categories?${params}`).then(readJson);
+        const selected = (data.categories || []).find((item) => item.name === row.name) || data.categories?.[0];
+        if (!selected) throw new Error("선택한 품목의 자료가 없습니다.");
+        setPath([selected]);
+        setRows(selected.children || []);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (row.children?.length) {
+      setPath((old) => [...old, row]);
+      setRows(row.children);
+    } else {
+      setPath((old) => [...old, row]);
+      setShowResults(true);
+    }
+  };
+
+  const back = () => {
+    if (path.length <= 1) {
+      setPath([]);
+      setRows(LARGE_CATEGORIES);
+      return;
+    }
+    const next = path.slice(0, -1);
+    setPath(next);
+    setRows(next[next.length - 1]?.children || []);
+  };
+
   const filters = { lclsf: path[0]?.code, mclsf: path[1]?.code, sclsf: path[2]?.code };
   if (showResults) return <TradeResults guided date={date} filters={filters} title={path.map((x) => x.name).join(" → ")} onBack={() => setShowResults(false)} />;
   return (
     <section>
       <div className="crumb">{path.length ? path.map((x) => x.name).join(" → ") : "품목 대분류를 선택하세요"}</div>
-      {path.length > 0 && <button className="back" onClick={() => setPath((x) => x.slice(0, -1))}>← 이전 단계</button>}
-      {loading && <Loading text="전국 분류와 건수를 불러오는 중입니다" />}
+      {path.length > 0 && <button className="back" onClick={back}>← 이전 단계</button>}
+      {loading && <Loading text="선택한 품목 자료를 불러오는 중입니다" />}
       {error && <ErrorBox message={error} />}
-      {!loading && !error && <div className="rows">{rows.map((row) => <button className="row" key={`${row.code}-${row.name}`} onClick={() => row.children.length ? setPath((x) => [...x, row]) : (setPath((x) => [...x, row]), setShowResults(true))}><strong>{row.name}</strong><span>{number(row.count)}건　›</span></button>)}</div>}
+      {!loading && !error && <div className="rows">{rows.map((row) => <button className="row" key={`${row.code}-${row.name}`} onClick={() => pick(row)}><strong>{row.name}</strong><span>{row.count == null ? "›" : `${number(row.count)}건　›`}</span></button>)}</div>}
       {!loading && path.length > 0 && <div className="sticky-action"><button onClick={() => setShowResults(true)}>선택한 조건으로 검색</button></div>}
     </section>
   );
