@@ -59,7 +59,7 @@ function ItemSearch({ date }) {
 
   const rows = useMemo(() => path.reduce((items, chosen) => items.find((x) => x.code === chosen.code)?.children || [], categories), [categories, path]);
   const filters = { lclsf: path[0]?.code, mclsf: path[1]?.code, sclsf: path[2]?.code };
-  if (showResults) return <TradeResults date={date} filters={filters} title={path.map((x) => x.name).join(" → ")} onBack={() => setShowResults(false)} />;
+  if (showResults) return <TradeResults guided date={date} filters={filters} title={path.map((x) => x.name).join(" → ")} onBack={() => setShowResults(false)} />;
   return (
     <section>
       <div className="crumb">{path.length ? path.map((x) => x.name).join(" → ") : "품목 대분류를 선택하세요"}</div>
@@ -72,13 +72,14 @@ function ItemSearch({ date }) {
   );
 }
 
-function TradeResults({ date, filters, title, onBack }) {
+function TradeResults({ date, filters, title, onBack, guided = false }) {
   const [data, setData] = useState(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState({ market: "", corp: "", unit: "" });
+  const [step, setStep] = useState(guided ? "market" : "results");
 
   useEffect(() => { setPage(0); setItems([]); }, [date, JSON.stringify(filters), selected.market, selected.corp, selected.unit]);
   useEffect(() => {
@@ -93,9 +94,23 @@ function TradeResults({ date, filters, title, onBack }) {
   }, [date, JSON.stringify(filters), selected.market, selected.corp, selected.unit, page]);
 
   const choose = (key, value) => setSelected((old) => ({ ...old, [key]: old[key] === value ? "" : value, ...(key === "market" ? { corp: "" } : {}) }));
+  const goBack = () => {
+    if (!guided || step === "market") return onBack?.();
+    setStep(step === "results" ? "corp" : "market");
+  };
+
+  if (guided && step === "market") return (
+    <FacetScreen title="도매시장을 선택하세요" crumb={title} rows={data?.markets || []} loading={loading} error={error} allLabel="전체 도매시장" allCount={data?.count || 0}
+      onBack={goBack} onPick={(name) => { choose("market", name); setStep("corp"); }} />
+  );
+  if (guided && step === "corp") return (
+    <FacetScreen title="법인·청과를 선택하세요" crumb={`${title}${selected.market ? ` → ${selected.market}` : " → 전체 도매시장"}`} rows={data?.corps || []} loading={loading} error={error} allLabel="전체 법인·청과" allCount={data?.count || 0}
+      onBack={goBack} onPick={(name) => { choose("corp", name); setStep("results"); }} />
+  );
+
   return (
     <section>
-      <div className="result-head">{onBack && <button onClick={onBack}>←</button>}<div><h1>{title}</h1><p>{data ? `전체 ${number(data.count)}건` : "전체 자료 조회 중"}</p></div></div>
+      <div className="result-head">{onBack && <button onClick={goBack}>←</button>}<div><h1>{title}{selected.market ? ` → ${selected.market}` : ""}{selected.corp ? ` → ${selected.corp}` : ""}</h1><p>{data ? `전체 ${number(data.count)}건` : "전체 자료 조회 중"}</p></div></div>
       {data && <>
         <Chips label="도매시장" values={data.markets} active={selected.market} onClick={(x) => choose("market", x)} />
         <Chips label="법인·청과" values={data.corps} active={selected.corp} onClick={(x) => choose("corp", x)} />
@@ -109,6 +124,18 @@ function TradeResults({ date, filters, title, onBack }) {
       {data?.count > 0 && <footer>총 {number(data.count)}건 · 건당 평균가 {number(data.averagePrice)}원</footer>}
     </section>
   );
+}
+
+function FacetScreen({ title, crumb, rows, loading, error, allLabel, allCount, onBack, onPick }) {
+  return <section className="facet-screen">
+    <div className="result-head"><button onClick={onBack}>←</button><div><h1>{title}</h1><p>{crumb}</p></div></div>
+    {loading && <Loading text="전체 건수를 확인하는 중입니다" />}
+    {error && <ErrorBox message={error} />}
+    {!loading && !error && <div className="rows">
+      <button className="row all-row" onClick={() => onPick("")}><strong>{allLabel}</strong><span>{number(allCount)}건　›</span></button>
+      {rows.map((row) => <button className="row" key={row.name} onClick={() => onPick(row.name)}><strong>{row.name}</strong><span>{number(row.count)}건　›</span></button>)}
+    </div>}
+  </section>;
 }
 
 function Chips({ label, values = [], active, onClick }) {
