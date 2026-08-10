@@ -1,10 +1,9 @@
-// 하루치 분류 트리(중분류>소분류>품종)를 카운트와 함께 1회 생성 → 캐시
-// 개별 행은 받지 않고 분류 컬럼만 받아 가볍고 빠르게
+// 하루치 분류 트리(대분류>중분류>소분류)를 카운트와 함께 1회 생성 → 캐시
 export const config = { maxDuration: 60 };
 
 const BASE = "https://apis.data.go.kr/B552845/katRealTime2/trades2";
 const PER = 9999, MAX_PAGES = 25;
-const COLS = "gds_mclsf_cd,gds_mclsf_nm,gds_sclsf_cd,gds_sclsf_nm,corp_gds_vrty_nm";
+const COLS = "gds_lclsf_cd,gds_lclsf_nm,gds_mclsf_cd,gds_mclsf_nm,gds_sclsf_cd,gds_sclsf_nm";
 
 export default async function handler(req, res) {
   const KEY = process.env.DATA_GO_KR_KEY;
@@ -26,23 +25,24 @@ export default async function handler(req, res) {
       for (const arr of await Promise.all(jobs)) rows = rows.concat(arr);
     }
 
-    // 중분류 > 소분류 > 품종 트리 만들기
-    const m = new Map();
+    // 대분류 > 중분류 > 소분류
+    const L = new Map();
     for (const r of rows) {
+      const lc = r.gds_lclsf_cd || "", ln = r.gds_lclsf_nm || "기타";
       const mc = r.gds_mclsf_cd || "", mn = r.gds_mclsf_nm || "기타";
       const sc = r.gds_sclsf_cd || "", sn = r.gds_sclsf_nm || "기타";
-      const vn = r.corp_gds_vrty_nm || "기타";
-      if (!m.has(mn)) m.set(mn, { cd: mc, nm: mn, n: 0, s: new Map() });
-      const M = m.get(mn); M.n++;
-      if (!M.s.has(sn)) M.s.set(sn, { cd: sc, nm: sn, n: 0, v: new Map() });
-      const S = M.s.get(sn); S.n++;
-      S.v.set(vn, (S.v.get(vn) || 0) + 1);
+      if (!L.has(ln)) L.set(ln, { cd: lc, nm: ln, n: 0, m: new Map() });
+      const Ln = L.get(ln); Ln.n++;
+      if (!Ln.m.has(mn)) Ln.m.set(mn, { cd: mc, nm: mn, n: 0, s: new Map() });
+      const Mn = Ln.m.get(mn); Mn.n++;
+      if (!Mn.s.has(sn)) Mn.s.set(sn, { cd: sc, nm: sn, n: 0 });
+      Mn.s.get(sn).n++;
     }
-    const tree = [...m.values()].sort(byNm).map((M) => ({
-      cd: M.cd, nm: M.nm, n: M.n,
-      ch: [...M.s.values()].sort(byNm).map((S) => ({
-        cd: S.cd, nm: S.nm, n: S.n,
-        ch: [...S.v.entries()].map(([nm, n]) => ({ nm, n })).sort(byNm),
+    const tree = [...L.values()].sort(byNm).map((Ln) => ({
+      cd: Ln.cd, nm: Ln.nm, n: Ln.n,
+      ch: [...Ln.m.values()].sort(byNm).map((Mn) => ({
+        cd: Mn.cd, nm: Mn.nm, n: Mn.n,
+        ch: [...Mn.s.values()].sort(byNm),
       })),
     }));
 
@@ -52,7 +52,6 @@ export default async function handler(req, res) {
     res.status(502).json({ error: "분류 정보를 불러오지 못했습니다." });
   }
 }
-
 function extract(j) { const r = j?.response?.body?.items?.item ?? []; return (Array.isArray(r) ? r : [r]).filter(Boolean); }
 function byNm(a, b) { return String(a.nm).localeCompare(String(b.nm), "ko"); }
 function todayKST() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }

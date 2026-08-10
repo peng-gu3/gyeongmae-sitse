@@ -56,8 +56,8 @@ function ItemTab({ date }) {
     return () => { alive = false; };
   }, [date]);
 
-  const node1 = tree?.find((m) => m.nm === sel.mclsfNm);
-  const node2 = node1?.ch?.find((s) => s.nm === sel.sclsfNm);
+  const node1 = tree?.find((l) => l.nm === sel.lclsfNm);        // 대분류
+  const node2 = node1?.ch?.find((m) => m.nm === sel.mclsfNm);   // 중분류
   const goResult = (extra = {}) => { setSel((s) => ({ ...s, ...extra })); setScreen("result"); };
 
   if (treeLoading) return <Loading msg="전국 도매시장 분류를 준비 중…" />;
@@ -66,20 +66,20 @@ function ItemTab({ date }) {
   return (
     <>
       {screen === "catL1" && (
-        <CatList title="품목 분류를 고르세요" crumb="" rows={filterRows(tree, q)} q={q} setQ={setQ}
-          onPick={(m) => { setSel({ mclsf: m.cd, mclsfNm: m.nm }); setScreen("catL2"); setQ(""); }} />
+        <CatList title="분류를 고르세요" crumb="" rows={filterRows(tree, q)} q={q} setQ={setQ}
+          onPick={(l) => { setSel({ lclsf: l.cd, lclsfNm: l.nm }); setScreen("catL2"); setQ(""); }} />
       )}
       {screen === "catL2" && node1 && (
-        <CatList title="품목을 고르세요" crumb={sel.mclsfNm} rows={filterRows(node1.ch, q)} q={q} setQ={setQ}
+        <CatList title="품목을 고르세요" crumb={sel.lclsfNm} rows={filterRows(node1.ch, q)} q={q} setQ={setQ}
           onBack={() => { setScreen("catL1"); setQ(""); }}
-          onPick={(s) => { setSel((v) => ({ ...v, sclsf: s.cd, sclsfNm: s.nm, vrty: undefined })); setScreen("catL3"); setQ(""); }}
+          onPick={(m) => { setSel((v) => ({ ...v, mclsf: m.cd, mclsfNm: m.nm, sclsf: undefined, sclsfNm: undefined, market: undefined, corp: undefined })); setScreen("catL3"); setQ(""); }}
           onSearch={() => goResult()} />
       )}
       {screen === "catL3" && node2 && (
-        <CatList title="품종을 고르세요" crumb={`${sel.mclsfNm} › ${sel.sclsfNm}`}
+        <CatList title="품종을 고르세요" crumb={`${sel.lclsfNm} › ${sel.mclsfNm}`}
           rows={[{ nm: "전체(품종 무관)", n: node2.n, all: true }, ...node2.ch]}
           onBack={() => setScreen("catL2")}
-          onPick={(v) => { setSel((s) => ({ ...s, vrty: v.all ? undefined : v.nm, market: undefined, corp: undefined })); setScreen("market"); }}
+          onPick={(s) => { setSel((v) => ({ ...v, sclsf: s.all ? undefined : s.cd, sclsfNm: s.all ? undefined : s.nm, market: undefined, corp: undefined })); setScreen("market"); }}
           onSearch={() => goResult()} />
       )}
       {screen === "market" && (
@@ -176,7 +176,7 @@ function OriginTab({ date }) {
 }
 
 /* ============ 공통 ============ */
-function crumb(s) { return [s.mclsfNm, s.sclsfNm, s.vrty, s.market, s.corp].filter(Boolean).join(" › "); }
+function crumb(s) { return [s.lclsfNm, s.mclsfNm, s.sclsfNm, s.market, s.corp].filter(Boolean).join(" › "); }
 function filterRows(rows, q) { return q.trim() ? rows.filter((r) => r.nm.includes(q.trim())) : rows; }
 
 function Loading({ msg }) {
@@ -241,7 +241,7 @@ function FacetList({ kind, date, sel, crumb, onBack, onPick, onSearch }) {
       .then((r) => r.json()).then((j) => alive && setData(j))
       .catch(() => alive && setData({ error: true })).finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [date, sel.mclsf, sel.sclsf, sel.vrty, sel.market]);
+  }, [date, sel.lclsf, sel.mclsf, sel.sclsf, sel.market]);
 
   const listArr = kind === "market" ? data?.markets : data?.corps;
   const allLabel = kind === "market" ? "전체 도매시장" : "전체 법인";
@@ -268,7 +268,7 @@ function Result({ date, sel, setSel, onBack }) {
   const [page, setPage] = useState(0);
   const [items, setItems] = useState([]);
   const size = 50;
-  useEffect(() => { setPage(0); setItems([]); }, [sel.origin, sel.unit, sel.market, sel.corp, sel.vrty, sel.sclsf, date]);
+  useEffect(() => { setPage(0); setItems([]); }, [sel.origin, sel.unit, sel.market, sel.corp, sel.sclsf, sel.mclsf, date]);
   useEffect(() => {
     let alive = true; setLoading(true);
     fetch(`/api/list?${qs({ date, ...sel, size, page })}`)
@@ -276,7 +276,7 @@ function Result({ date, sel, setSel, onBack }) {
       .then((j) => { if (!alive) return; setData(j); setItems((prev) => page === 0 ? (j.items || []) : [...prev, ...(j.items || [])]); })
       .catch(() => alive && setData({ error: true })).finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [date, sel.mclsf, sel.sclsf, sel.vrty, sel.market, sel.corp, sel.origin, sel.unit, page]);
+  }, [date, sel.lclsf, sel.mclsf, sel.sclsf, sel.market, sel.corp, sel.origin, sel.unit, page]);
 
   const s = data?.summary;
   const totalPages = data ? Math.ceil((data.count || 0) / size) : 1;
