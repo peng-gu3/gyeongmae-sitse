@@ -143,7 +143,13 @@ function TradeResults({ date, filters, title, onBack, guided = false }) {
   const choose = (key, value) => setSelected((old) => ({ ...old, [key]: old[key] === value ? "" : value, ...(key === "market" ? { corp: "" } : {}) }));
   const goBack = () => {
     if (!guided || step === "market") return onBack?.();
-    setStep(step === "results" ? "corp" : "market");
+    if (step === "results") {
+      setSelected((old) => ({ ...old, corp: "" }));
+      setStep("corp");
+      return;
+    }
+    setSelected((old) => ({ ...old, market: "", corp: "" }));
+    setStep("market");
   };
 
   if (guided && step === "market") return (
