@@ -1,64 +1,57 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { Search, Gavel, MapPin, Clock, X, RefreshCw } from "lucide-react";
+import { Search, Gavel, MapPin, Clock, X, RefreshCw, Send } from "lucide-react";
 
 const UP = "#e5342b", DOWN = "#1f6fd4";
 const won = (n) => Number(n || 0).toLocaleString("ko-KR");
 
-function fmtTime(s) {
-  if (!s) return "";
-  const d = String(s).replace(/\D/g, "");
-  if (d.length >= 12) return d.slice(8, 10) + ":" + d.slice(10, 12);
-  const m = String(s).match(/(\d{1,2}):(\d{2})/);
-  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : String(s);
-}
-
-async function loadAuctions(date) {
-  const r = await fetch(`/api/auction?date=${date}`);
-  if (!r.ok) throw new Error("api error");
-  const j = await r.json();
-  const raw = j?.response?.body?.items?.item ?? j?.body?.items?.item ?? [];
-  const list = Array.isArray(raw) ? raw : [raw];
-  return list.filter(Boolean).map((x, i) => ({
-    id: x.auctn_seq ?? i,
-    mkt: x.whsl_mrkt_nm || "",
-    corp: x.corp_nm || "",
-    item: x.corp_gds_item_nm || x.gds_sclsf_nm || "",
-    vrty: x.corp_gds_vrty_nm || "",
-    origin: x.plor_nm || "",
-    unit: `${x.unit_qty ?? ""}${x.unit_nm ?? ""}`.trim() || x.unit_nm || "",
-    price: Number(x.scsbd_prc),
-    qty: Number(x.qty),
-    trdSe: x.trd_se || "",
-    t: fmtTime(x.scsbd_dt),
-  }));
-}
-
 export default function App() {
   const todayStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
   const [date, setDate] = useState(todayStr);
+  const [market, setMarket] = useState("");
+  const [origin, setOrigin] = useState(""); // 보낸 곳(산지)
+  const [item, setItem] = useState("");     // 품목
+  const [markets, setMarkets] = useState([]);
   const [data, setData] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [mkt, setMkt] = useState("전체");
-  const [q, setQ] = useState("");
   const [sort, setSort] = useState("time");
   const [sel, setSel] = useState(null);
 
-  const fetchData = () => {
-    setLoading(true); setErr("");
-    loadAuctions(date)
-      .then((d) => { setData(d); if (!d.length) setErr("이 날짜에는 낙찰 데이터가 없습니다."); })
-      .catch(() => setErr("데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."))
-      .finally(() => setLoading(false));
-  };
-  useEffect(fetchData, [date]);
+  // 입력 디바운스용 즉시값 → 지연 반영
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    const id = setTimeout(() => setNonce((n) => n + 1), 500);
+    return () => clearTimeout(id);
+  }, [origin, item]);
 
-  const markets = useMemo(() => ["전체", ...Array.from(new Set(data.map((d) => d.mkt))).filter(Boolean)], [data]);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setErr("");
+    const q = new URLSearchParams({ date, market, origin: origin.trim(), item: item.trim() });
+    fetch(`/api/auction?${q.toString()}`)
+      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
+      .then((j) => {
+        if (!alive) return;
+        setData(j.items || []);
+        setTotal(j.total || 0);
+        setCount(j.count || 0);
+        if (j.markets?.length) setMarkets(j.markets);
+        if (!(j.items || []).length) {
+          setErr(origin.trim() ? `"${origin.trim()}"에서 보낸 물량이 아직 없습니다.` : "이 날짜에는 낙찰 데이터가 없습니다.");
+        }
+      })
+      .catch(() => alive && setErr("데이터를 불러오지 못했습니다. 잠시 후 새로고침 해주세요."))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [date, market, nonce]);
+
   const rows = useMemo(() => {
-    let r = data.filter((x) => (mkt === "전체" ? true : x.mkt === mkt));
-    if (q.trim()) r = r.filter((x) => x.item.includes(q.trim()) || x.origin.includes(q.trim()));
-    return [...r].sort((a, b) => (sort === "time" ? String(b.t).localeCompare(String(a.t)) : (b.price || 0) - (a.price || 0)));
-  }, [data, mkt, q, sort]);
+    return [...data].sort((a, b) =>
+      sort === "time" ? String(b.dt).localeCompare(String(a.dt)) : (b.price || 0) - (a.price || 0)
+    );
+  }, [data, sort]);
 
   const stats = useMemo(() => {
     if (!sel) return null;
@@ -66,6 +59,8 @@ export default function App() {
     if (!p.length) return null;
     return { n: p.length, min: Math.min(...p), max: Math.max(...p), avg: Math.round(p.reduce((a, b) => a + b, 0) / p.length) };
   }, [sel, data]);
+
+  const refresh = () => setNonce((n) => n + 1);
 
   return (
     <div className="min-h-screen w-full bg-stone-100 flex justify-center" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
@@ -76,36 +71,42 @@ export default function App() {
               <Gavel size={22} className="text-emerald-300" />
               <h1 className="text-xl font-bold tracking-tight">농수산 경매시세</h1>
             </div>
-            <button onClick={fetchData} className="flex items-center gap-1 text-sm bg-emerald-700/60 px-2.5 py-1.5 rounded-full active:scale-95">
+            <button onClick={refresh} className="flex items-center gap-1 text-sm bg-emerald-700/60 px-2.5 py-1.5 rounded-full active:scale-95">
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> 새로고침
             </button>
           </div>
+
           <div className="flex items-center gap-2 mt-2.5">
-            <span className="text-sm text-emerald-200">조회 날짜</span>
+            <span className="text-sm text-emerald-200">날짜</span>
             <input type="date" value={date} max={todayStr} onChange={(e) => setDate(e.target.value)}
               className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none" />
+            <select value={market} onChange={(e) => setMarket(e.target.value)}
+              className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none flex-1">
+              <option value="">전체 도매시장</option>
+              {markets.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
-          <div className="mt-3 flex items-center gap-2 bg-white rounded-lg px-3 py-2.5">
-            <Search size={18} className="text-stone-400" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="품목·산지 검색 (예: 배추, 제주)"
-              className="flex-1 text-base text-stone-800 outline-none placeholder:text-stone-400" />
-            {q && <button onClick={() => setQ("")} className="text-stone-400"><X size={18} /></button>}
-          </div>
-        </div>
 
-        <div className="bg-stone-50 border-b border-stone-200 px-3 py-2 overflow-x-auto">
-          <div className="flex gap-1.5 w-max">
-            {markets.map((m) => (
-              <button key={m} onClick={() => setMkt(m)}
-                className={`px-3.5 py-2 rounded-full text-sm font-semibold whitespace-nowrap ${mkt === m ? "bg-emerald-800 text-white" : "bg-white text-stone-600 border border-stone-200"}`}>
-                {m.replace("도매시장", "")}
-              </button>
-            ))}
+          {/* 보낸 곳(산지) */}
+          <div className="mt-2 flex items-center gap-2 bg-white rounded-lg px-3 py-2.5">
+            <Send size={17} className="text-emerald-600" />
+            <input value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="보낸 곳 (예: 논산, 제주)"
+              className="flex-1 text-base text-stone-800 outline-none placeholder:text-stone-400" />
+            {origin && <button onClick={() => setOrigin("")} className="text-stone-400"><X size={18} /></button>}
+          </div>
+          {/* 품목 */}
+          <div className="mt-2 flex items-center gap-2 bg-white rounded-lg px-3 py-2.5">
+            <Search size={17} className="text-stone-400" />
+            <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="품목 (예: 배추, 사과)"
+              className="flex-1 text-base text-stone-800 outline-none placeholder:text-stone-400" />
+            {item && <button onClick={() => setItem("")} className="text-stone-400"><X size={18} /></button>}
           </div>
         </div>
 
         <div className="flex items-center justify-between px-4 py-2.5">
-          <span className="text-sm text-stone-500">{loading ? "불러오는 중…" : `${rows.length}건`}</span>
+          <span className="text-sm text-stone-500">
+            {loading ? "전국 도매시장 조회 중…" : `${won(count)}건${count > rows.length ? ` 중 ${won(rows.length)}건 표시` : ""}`}
+          </span>
           <div className="flex gap-1 text-sm">
             {[["time", "최신순"], ["price", "고가순"]].map(([k, label]) => (
               <button key={k} onClick={() => setSort(k)}
@@ -115,8 +116,13 @@ export default function App() {
         </div>
 
         <div className="px-3 pb-24 space-y-2">
+          {loading && (
+            <div className="text-center text-stone-400 text-sm py-10">
+              전국 데이터를 모으는 중입니다.<br />처음 조회는 몇 초 걸릴 수 있어요.
+            </div>
+          )}
           {!loading && err && <div className="text-center text-stone-400 text-base py-16 px-6">{err}</div>}
-          {rows.map((r) => (
+          {!loading && rows.map((r) => (
             <button key={r.id} onClick={() => setSel(r)}
               className="w-full text-left bg-white rounded-xl border border-stone-200 px-4 py-3.5 active:scale-[0.99]">
               <div className="flex items-start justify-between gap-3">
@@ -126,10 +132,9 @@ export default function App() {
                     {r.vrty && <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">{r.vrty}</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-1 text-sm text-stone-500">
-                    <span className="flex items-center gap-0.5"><MapPin size={13} /> {r.origin || "-"}</span>
-                    <span>·</span>
-                    <span className="truncate">{r.mkt.replace("도매시장", "")} {r.corp}</span>
+                    <span className="flex items-center gap-0.5 min-w-0"><MapPin size={13} className="shrink-0" /> <span className="truncate">{r.origin || "-"}</span></span>
                   </div>
+                  <div className="text-xs text-stone-400 mt-0.5 truncate">{r.mkt} · {r.corp}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-xl font-bold text-stone-900 tabular-nums">
@@ -156,7 +161,8 @@ export default function App() {
                     <h2 className="text-2xl font-bold text-stone-900">{sel.item}</h2>
                     {sel.vrty && <span className="text-sm font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">{sel.vrty}</span>}
                   </div>
-                  <p className="text-sm text-stone-500 mt-1">{sel.mkt} · {sel.corp} · {sel.origin}</p>
+                  <p className="text-sm text-stone-500 mt-1">{sel.mkt} · {sel.corp}</p>
+                  <p className="text-sm text-stone-500">보낸 곳: {sel.origin || "-"}</p>
                 </div>
                 <button onClick={() => setSel(null)} className="text-stone-400 p-1"><X size={24} /></button>
               </div>
@@ -164,15 +170,16 @@ export default function App() {
                 <span className="text-4xl font-bold text-stone-900 tabular-nums">{won(sel.price)}</span>
                 <span className="text-base text-stone-400 mb-1">원 / {sel.unit}</span>
               </div>
-              {sel.trdSe && <p className="text-sm text-stone-400 mt-1">매매방법: {sel.trdSe} · 수량 {won(sel.qty)}</p>}
+              {sel.trdSe && <p className="text-sm text-stone-400 mt-1">매매방법: {sel.trdSe} · 수량 {won(sel.qty)} · {sel.t} 낙찰</p>}
               {stats && (
                 <div className="mt-5">
-                  <p className="text-base font-semibold text-stone-700 mb-2">오늘 "{sel.item}" 낙찰 요약 ({stats.n}건)</p>
+                  <p className="text-base font-semibold text-stone-700 mb-2">"{sel.item}" 낙찰 요약 ({stats.n}건)</p>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div className="bg-blue-50 rounded-lg p-3"><p className="text-sm text-stone-500">최저</p><p className="text-lg font-bold tabular-nums" style={{ color: DOWN }}>{won(stats.min)}</p></div>
                     <div className="bg-stone-50 rounded-lg p-3"><p className="text-sm text-stone-500">평균</p><p className="text-lg font-bold tabular-nums text-stone-800">{won(stats.avg)}</p></div>
                     <div className="bg-red-50 rounded-lg p-3"><p className="text-sm text-stone-500">최고</p><p className="text-lg font-bold tabular-nums" style={{ color: UP }}>{won(stats.max)}</p></div>
                   </div>
+                  <p className="text-xs text-stone-400 mt-2">※ 현재 조회 조건 내 기준</p>
                 </div>
               )}
             </div>
