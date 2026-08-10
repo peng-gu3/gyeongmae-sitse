@@ -2,7 +2,8 @@
 export const config = { maxDuration: 60 };
 
 const BASE = "https://apis.data.go.kr/B552845/katRealTime2/trades2";
-const PER = 9999, MAX_PAGES = 25;
+// The upstream API returns at most 1,000 rows per response.
+const PER = 1000;
 const COLS = "gds_lclsf_cd,gds_lclsf_nm,gds_mclsf_cd,gds_mclsf_nm,gds_sclsf_cd,gds_sclsf_nm";
 
 export default async function handler(req, res) {
@@ -18,7 +19,7 @@ export default async function handler(req, res) {
     const first = await fetch(url(1)).then((r) => r.json());
     const total = Number(first?.response?.body?.totalCount ?? 0);
     let rows = extract(first);
-    const pages = Math.min(Math.ceil(total / PER) || 1, MAX_PAGES);
+    const pages = Math.ceil(total / PER) || 1;
     if (pages > 1) {
       const jobs = [];
       for (let p = 2; p <= pages; p++) jobs.push(fetch(url(p)).then((r) => r.json()).then(extract).catch(() => []));

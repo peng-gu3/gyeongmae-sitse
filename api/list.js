@@ -2,7 +2,10 @@
 export const config = { maxDuration: 30 };
 
 const BASE = "https://apis.data.go.kr/B552845/katRealTime2/trades2";
-const PER = 9999, MAX_PAGES = 15;
+// The upstream API silently caps every response at 1,000 rows even when a
+// larger numOfRows is requested.  Page using the real cap so totalCount is
+// converted to the correct number of requests.
+const PER = 1000;
 const COLS = "scsbd_dt,whsl_mrkt_nm,corp_nm,corp_gds_item_nm,corp_gds_vrty_nm,plor_nm,scsbd_prc,qty,unit_qty,unit_nm,trd_se,gds_sclsf_nm";
 
 export default async function handler(req, res) {
@@ -29,7 +32,7 @@ export default async function handler(req, res) {
     const first = await fetch(url(1)).then((r) => r.json());
     const total = Number(first?.response?.body?.totalCount ?? 0);
     let raw = extract(first);
-    const pages = Math.min(Math.ceil(total / PER) || 1, MAX_PAGES);
+    const pages = Math.ceil(total / PER) || 1;
     if (pages > 1) {
       const jobs = [];
       for (let p = 2; p <= pages; p++) jobs.push(fetch(url(p)).then((r) => r.json()).then(extract).catch(() => []));
