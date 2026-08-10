@@ -1,17 +1,20 @@
 import { dateCondition, fetchAll } from "../lib/auction-api.js";
 
-const SELECT = "scsbd_dt,whsl_mrkt_nm,corp_nm,corp_gds_item_nm,corp_gds_vrty_nm,plor_nm,scsbd_prc,qty,unit_qty,unit_nm,trd_se,gds_sclsf_nm";
+const SELECT = "scsbd_dt,whsl_mrkt_nm,corp_nm,corp_gds_item_nm,corp_gds_vrty_nm,plor_nm,scsbd_prc,qty,unit_qty,unit_nm,trd_se,gds_sclsf_cd,gds_sclsf_nm";
 
 export default async function handler(req, res) {
   try {
-    const { date = kstToday(), lclsf = "", mclsf = "", sclsf = "", market = "", corp = "", origin = "", unit = "", page = "0", size = "50" } = req.query;
+    const { date = kstToday(), lclsf = "", mclsf = "", sclsf = "", includeUnclassified = "", market = "", corp = "", origin = "", unit = "", page = "0", size = "50" } = req.query;
     const params = { ...dateCondition(String(date)), selectable: SELECT };
     if (lclsf) params["cond[gds_lclsf_cd::EQ]"] = String(lclsf);
     if (mclsf) params["cond[gds_mclsf_cd::EQ]"] = String(mclsf);
-    if (sclsf) params["cond[gds_sclsf_cd::EQ]"] = String(sclsf);
+    if (sclsf && includeUnclassified !== "1") params["cond[gds_sclsf_cd::EQ]"] = String(sclsf);
 
     const { rows } = await fetchAll(params);
-    const all = rows.map(normalize);
+    let all = rows.map(normalize);
+    if (sclsf && includeUnclassified === "1") {
+      all = all.filter((row) => row.categoryCode === String(sclsf) || row.categoryName === "-" || !row.categoryName);
+    }
     const markets = facet(all, "market");
     const byMarket = market ? all.filter((x) => x.market === market) : all;
     const corps = facet(byMarket, "corp");
@@ -48,6 +51,7 @@ function normalize(row) {
   return {
     datetime: row.scsbd_dt || "", time: formatTime(row.scsbd_dt),
     market: row.whsl_mrkt_nm || "", corp: row.corp_nm || "",
+    categoryCode: String(row.gds_sclsf_cd || ""), categoryName: row.gds_sclsf_nm || "",
     item: row.corp_gds_item_nm || row.gds_sclsf_nm || "",
     variety: row.corp_gds_vrty_nm || "", origin: row.plor_nm || "",
     price, quantity: Number(row.qty) || 0, tradeType: row.trd_se || "",
