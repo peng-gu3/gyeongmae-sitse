@@ -34,8 +34,18 @@ function node(code, name) { return { code: code || "", name: name || "기타", c
 function serialize(map) {
   return [...map.values()].sort(sortName).map((x) => ({
     code: x.code, name: x.name, count: x.count,
-    children: serialize(x.children),
+    children: mergeUnclassified(serialize(x.children)),
   }));
+}
+function mergeUnclassified(children) {
+  const unclassified = children.find((child) => child.name === "-" || !child.name);
+  const general = children.find((child) => /\(일반\)$/.test(child.name));
+  if (!unclassified || !general) {
+    return children.map((child) => child.name === "-" ? { ...child, name: "분류명 없음" } : child);
+  }
+  return children.filter((child) => child !== unclassified).map((child) => child === general
+    ? { ...child, count: child.count + unclassified.count, includeUnclassified: true }
+    : child);
 }
 function sortName(a, b) { return a.name.localeCompare(b.name, "ko"); }
 function kstToday() { return new Date(Date.now() + 32400000).toISOString().slice(0, 10); }
