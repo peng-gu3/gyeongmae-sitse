@@ -1,191 +1,324 @@
-import React, { useState, useMemo, useEffect } from "react";
-import { Search, Gavel, MapPin, Clock, X, RefreshCw, Send } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ChevronRight, ChevronLeft, Gavel, Search as SearchIcon, Loader2 } from "lucide-react";
 
-const UP = "#e5342b", DOWN = "#1f6fd4";
 const won = (n) => Number(n || 0).toLocaleString("ko-KR");
+const kstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
 export default function App() {
-  const todayStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-  const [date, setDate] = useState(todayStr);
-  const [market, setMarket] = useState("");
-  const [origin, setOrigin] = useState(""); // 보낸 곳(산지)
-  const [item, setItem] = useState("");     // 품목
-  const [markets, setMarkets] = useState([]);
-  const [data, setData] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [count, setCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const [sort, setSort] = useState("time");
-  const [sel, setSel] = useState(null);
+  const [date, setDate] = useState(kstToday());
+  const [tree, setTree] = useState(null);
+  const [treeErr, setTreeErr] = useState("");
+  const [treeLoading, setTreeLoading] = useState(true);
 
-  // 입력 디바운스용 즉시값 → 지연 반영
-  const [nonce, setNonce] = useState(0);
-  useEffect(() => {
-    const id = setTimeout(() => setNonce((n) => n + 1), 500);
-    return () => clearTimeout(id);
-  }, [origin, item]);
+  // 선택 상태
+  const [sel, setSel] = useState({}); // {mclsf,mclsfNm,sclsf,sclsfNm,vrty,market,corp}
+  const [screen, setScreen] = useState("catL1"); // catL1|catL2|catL3|market|corp|result
+  const [q, setQ] = useState("");
 
+  // 트리 로드
   useEffect(() => {
     let alive = true;
-    setLoading(true); setErr("");
-    const q = new URLSearchParams({ date, market, origin: origin.trim(), item: item.trim() });
-    fetch(`/api/auction?${q.toString()}`)
+    setTreeLoading(true); setTreeErr("");
+    fetch(`/api/tree?date=${date}`)
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((j) => {
-        if (!alive) return;
-        setData(j.items || []);
-        setTotal(j.total || 0);
-        setCount(j.count || 0);
-        if (j.markets?.length) setMarkets(j.markets);
-        if (!(j.items || []).length) {
-          setErr(origin.trim() ? `"${origin.trim()}"에서 보낸 물량이 아직 없습니다.` : "이 날짜에는 낙찰 데이터가 없습니다.");
-        }
-      })
-      .catch(() => alive && setErr("데이터를 불러오지 못했습니다. 잠시 후 새로고침 해주세요."))
-      .finally(() => alive && setLoading(false));
+      .then((j) => { if (alive) { setTree(j.tree || []); if (!j.tree?.length) setTreeErr("이 날짜에는 데이터가 없습니다."); } })
+      .catch(() => alive && setTreeErr("데이터를 불러오지 못했습니다. 새로고침 해주세요."))
+      .finally(() => alive && setTreeLoading(false));
+    // 날짜 바뀌면 처음으로
+    setSel({}); setScreen("catL1"); setQ("");
     return () => { alive = false; };
-  }, [date, market, nonce]);
+  }, [date]);
 
-  const rows = useMemo(() => {
-    return [...data].sort((a, b) =>
-      sort === "time" ? String(b.dt).localeCompare(String(a.dt)) : (b.price || 0) - (a.price || 0)
-    );
-  }, [data, sort]);
+  const node1 = tree?.find((m) => m.nm === sel.mclsfNm);
+  const node2 = node1?.ch?.find((s) => s.nm === sel.sclsfNm);
 
-  const stats = useMemo(() => {
-    if (!sel) return null;
-    const p = data.filter((d) => d.item === sel.item).map((d) => d.price).filter(Boolean);
-    if (!p.length) return null;
-    return { n: p.length, min: Math.min(...p), max: Math.max(...p), avg: Math.round(p.reduce((a, b) => a + b, 0) / p.length) };
-  }, [sel, data]);
-
-  const refresh = () => setNonce((n) => n + 1);
+  const goResult = (extra = {}) => { setSel((s) => ({ ...s, ...extra })); setScreen("result"); };
 
   return (
-    <div className="min-h-screen w-full bg-stone-100 flex justify-center" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <div className="w-full max-w-md bg-stone-50 min-h-screen shadow-xl relative">
-        <div className="sticky top-0 z-20 bg-emerald-900 text-white px-4 pt-4 pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Gavel size={22} className="text-emerald-300" />
-              <h1 className="text-xl font-bold tracking-tight">농수산 경매시세</h1>
-            </div>
-            <button onClick={refresh} className="flex items-center gap-1 text-sm bg-emerald-700/60 px-2.5 py-1.5 rounded-full active:scale-95">
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> 새로고침
-            </button>
+    <div className="min-h-screen w-full bg-stone-950 text-stone-100 flex justify-center" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+      <div className="w-full max-w-md min-h-screen relative pb-4">
+        {/* Header */}
+        <div className="sticky top-0 z-20 bg-emerald-900 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Gavel size={20} className="text-emerald-300" />
+            <span className="text-lg font-bold">농수산 경매시세</span>
           </div>
-
-          <div className="flex items-center gap-2 mt-2.5">
-            <span className="text-sm text-emerald-200">날짜</span>
-            <input type="date" value={date} max={todayStr} onChange={(e) => setDate(e.target.value)}
-              className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none" />
-            <select value={market} onChange={(e) => setMarket(e.target.value)}
-              className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none flex-1">
-              <option value="">전체 도매시장</option>
-              {markets.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-
-          {/* 보낸 곳(산지) */}
-          <div className="mt-2 flex items-center gap-2 bg-white rounded-lg px-3 py-2.5">
-            <Send size={17} className="text-emerald-600" />
-            <input value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="보낸 곳 (예: 논산, 제주)"
-              className="flex-1 text-base text-stone-800 outline-none placeholder:text-stone-400" />
-            {origin && <button onClick={() => setOrigin("")} className="text-stone-400"><X size={18} /></button>}
-          </div>
-          {/* 품목 */}
-          <div className="mt-2 flex items-center gap-2 bg-white rounded-lg px-3 py-2.5">
-            <Search size={17} className="text-stone-400" />
-            <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="품목 (예: 배추, 사과)"
-              className="flex-1 text-base text-stone-800 outline-none placeholder:text-stone-400" />
-            {item && <button onClick={() => setItem("")} className="text-stone-400"><X size={18} /></button>}
-          </div>
+          <input type="date" value={date} max={kstToday()} onChange={(e) => setDate(e.target.value)}
+            className="text-sm bg-emerald-800 text-white rounded px-2 py-1 outline-none" />
         </div>
 
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <span className="text-sm text-stone-500">
-            {loading ? "전국 도매시장 조회 중…" : `${won(count)}건${count > rows.length ? ` 중 ${won(rows.length)}건 표시` : ""}`}
-          </span>
-          <div className="flex gap-1 text-sm">
-            {[["time", "최신순"], ["price", "고가순"]].map(([k, label]) => (
-              <button key={k} onClick={() => setSort(k)}
-                className={`px-3 py-1.5 rounded-md font-medium ${sort === k ? "bg-stone-800 text-white" : "text-stone-500"}`}>{label}</button>
-            ))}
-          </div>
-        </div>
+        {treeLoading && <Loading />}
+        {!treeLoading && treeErr && <div className="text-center text-stone-400 py-20 px-6">{treeErr}</div>}
 
-        <div className="px-3 pb-24 space-y-2">
-          {loading && (
-            <div className="text-center text-stone-400 text-sm py-10">
-              전국 데이터를 모으는 중입니다.<br />처음 조회는 몇 초 걸릴 수 있어요.
-            </div>
-          )}
-          {!loading && err && <div className="text-center text-stone-400 text-base py-16 px-6">{err}</div>}
-          {!loading && rows.map((r) => (
-            <button key={r.id} onClick={() => setSel(r)}
-              className="w-full text-left bg-white rounded-xl border border-stone-200 px-4 py-3.5 active:scale-[0.99]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-stone-900 text-lg truncate">{r.item}</span>
-                    {r.vrty && <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">{r.vrty}</span>}
-                  </div>
-                  <div className="flex items-center gap-2 mt-1 text-sm text-stone-500">
-                    <span className="flex items-center gap-0.5 min-w-0"><MapPin size={13} className="shrink-0" /> <span className="truncate">{r.origin || "-"}</span></span>
-                  </div>
-                  <div className="text-xs text-stone-400 mt-0.5 truncate">{r.mkt} · {r.corp}</div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-xl font-bold text-stone-900 tabular-nums">
-                    {won(r.price)}<span className="text-xs font-medium text-stone-400">원/{r.unit}</span>
-                  </div>
-                  {r.trdSe && <span className="text-xs text-stone-500 bg-stone-100 px-1.5 py-0.5 rounded">{r.trdSe}</span>}
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-stone-100 text-sm text-stone-400">
-                <span className="flex items-center gap-1"><Clock size={13} /> {r.t} 낙찰</span>
-                <span>수량 {won(r.qty)}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {sel && (
-          <div className="fixed inset-0 z-30 flex items-end justify-center" onClick={() => setSel(null)}>
-            <div className="absolute inset-0 bg-black/40" />
-            <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 pb-8 max-h-[80%] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-2xl font-bold text-stone-900">{sel.item}</h2>
-                    {sel.vrty && <span className="text-sm font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">{sel.vrty}</span>}
-                  </div>
-                  <p className="text-sm text-stone-500 mt-1">{sel.mkt} · {sel.corp}</p>
-                  <p className="text-sm text-stone-500">보낸 곳: {sel.origin || "-"}</p>
-                </div>
-                <button onClick={() => setSel(null)} className="text-stone-400 p-1"><X size={24} /></button>
-              </div>
-              <div className="mt-4 flex items-end gap-2">
-                <span className="text-4xl font-bold text-stone-900 tabular-nums">{won(sel.price)}</span>
-                <span className="text-base text-stone-400 mb-1">원 / {sel.unit}</span>
-              </div>
-              {sel.trdSe && <p className="text-sm text-stone-400 mt-1">매매방법: {sel.trdSe} · 수량 {won(sel.qty)} · {sel.t} 낙찰</p>}
-              {stats && (
-                <div className="mt-5">
-                  <p className="text-base font-semibold text-stone-700 mb-2">"{sel.item}" 낙찰 요약 ({stats.n}건)</p>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-blue-50 rounded-lg p-3"><p className="text-sm text-stone-500">최저</p><p className="text-lg font-bold tabular-nums" style={{ color: DOWN }}>{won(stats.min)}</p></div>
-                    <div className="bg-stone-50 rounded-lg p-3"><p className="text-sm text-stone-500">평균</p><p className="text-lg font-bold tabular-nums text-stone-800">{won(stats.avg)}</p></div>
-                    <div className="bg-red-50 rounded-lg p-3"><p className="text-sm text-stone-500">최고</p><p className="text-lg font-bold tabular-nums" style={{ color: UP }}>{won(stats.max)}</p></div>
-                  </div>
-                  <p className="text-xs text-stone-400 mt-2">※ 현재 조회 조건 내 기준</p>
-                </div>
-              )}
-            </div>
-          </div>
+        {!treeLoading && !treeErr && tree && (
+          <>
+            {screen === "catL1" && (
+              <CatList
+                title="품목 분류를 고르세요"
+                crumb=""
+                rows={filterRows(tree, q)}
+                q={q} setQ={setQ}
+                onPick={(m) => { setSel({ mclsf: m.cd, mclsfNm: m.nm }); setScreen("catL2"); setQ(""); }}
+              />
+            )}
+            {screen === "catL2" && node1 && (
+              <CatList
+                title="품목을 고르세요"
+                crumb={sel.mclsfNm}
+                rows={filterRows(node1.ch, q)}
+                q={q} setQ={setQ}
+                onBack={() => { setScreen("catL1"); setQ(""); }}
+                onPick={(s) => { setSel((v) => ({ ...v, sclsf: s.cd, sclsfNm: s.nm, vrty: undefined })); setScreen("catL3"); setQ(""); }}
+                onSearch={() => goResult()}
+              />
+            )}
+            {screen === "catL3" && node2 && (
+              <CatList
+                title="품종을 고르세요"
+                crumb={`${sel.mclsfNm} › ${sel.sclsfNm}`}
+                rows={[{ nm: "전체(품종 무관)", n: node2.n, all: true }, ...node2.ch]}
+                onBack={() => { setScreen("catL2"); }}
+                onPick={(v) => { setSel((s) => ({ ...s, vrty: v.all ? undefined : v.nm, market: undefined, corp: undefined })); setScreen("market"); }}
+                onSearch={() => goResult()}
+              />
+            )}
+            {screen === "market" && (
+              <FacetList
+                kind="market" date={date} sel={sel}
+                crumb={crumb(sel)}
+                onBack={() => setScreen("catL3")}
+                onPick={(m) => { setSel((s) => ({ ...s, market: m.all ? undefined : m.nm, corp: undefined })); setScreen(m.all ? "result" : "corp"); }}
+                onSearch={() => goResult()}
+              />
+            )}
+            {screen === "corp" && (
+              <FacetList
+                kind="corp" date={date} sel={sel}
+                crumb={crumb(sel)}
+                onBack={() => setScreen("market")}
+                onPick={(c) => goResult({ corp: c.all ? undefined : c.nm })}
+                onSearch={() => goResult()}
+              />
+            )}
+            {screen === "result" && (
+              <Result date={date} sel={sel} setSel={setSel}
+                onBack={() => setScreen(sel.corp ? "corp" : sel.market ? "corp" : "market")} />
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
+
+function crumb(s) {
+  return [s.mclsfNm, s.sclsfNm, s.vrty, s.market, s.corp].filter(Boolean).join(" › ");
+}
+function filterRows(rows, q) {
+  if (!q.trim()) return rows;
+  return rows.filter((r) => r.nm.includes(q.trim()));
+}
+
+function Loading() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-stone-400">
+      <Loader2 className="animate-spin mb-3" size={28} />
+      <p className="text-base">전국 도매시장 분류를 준비 중…</p>
+      <p className="text-sm mt-1">처음 한 번만 몇 초 걸려요.</p>
+    </div>
+  );
+}
+
+function Crumb({ text }) {
+  if (!text) return null;
+  return <div className="bg-stone-800 text-stone-300 text-sm px-4 py-2">분류: {text}</div>;
+}
+
+function SearchBtn({ onSearch }) {
+  if (!onSearch) return null;
+  return (
+    <div className="sticky bottom-0 p-3 bg-gradient-to-t from-stone-950 to-transparent">
+      <button onClick={onSearch} className="w-full bg-emerald-600 text-white text-lg font-bold py-3.5 rounded-full active:scale-[0.99]">
+        선택한 조건으로 검색
+      </button>
+    </div>
+  );
+}
+
+function Row({ nm, n, onClick, bold }) {
+  return (
+    <button onClick={onClick} className="w-full flex items-center justify-between px-4 py-4 border-b border-stone-800 active:bg-stone-900">
+      <span className={`text-lg ${bold ? "font-bold" : "font-semibold"}`}>{nm}</span>
+      <span className="flex items-center gap-1 text-stone-400 text-base">{won(n)}건 <ChevronRight size={18} /></span>
+    </button>
+  );
+}
+
+function TopBar({ crumb, onBack }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-stone-800">
+      {onBack && <button onClick={onBack} className="p-1 text-stone-300"><ChevronLeft size={24} /></button>}
+      <span className="text-sm text-stone-400 truncate">{crumb || "전체"}</span>
+    </div>
+  );
+}
+
+function CatList({ title, crumb, rows, q, setQ, onPick, onBack, onSearch }) {
+  return (
+    <div className="pb-24">
+      <TopBar crumb={crumb} onBack={onBack} />
+      <div className="px-4 pt-3 pb-2 text-base font-bold text-emerald-300">{title}</div>
+      {setQ && (
+        <div className="mx-4 mb-2 flex items-center gap-2 bg-stone-800 rounded-lg px-3 py-2">
+          <SearchIcon size={16} className="text-stone-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름으로 찾기"
+            className="flex-1 bg-transparent text-base outline-none placeholder:text-stone-500" />
+        </div>
+      )}
+      <div>
+        {rows.map((r) => <Row key={r.nm} nm={r.nm} n={r.n} bold={r.all} onClick={() => onPick(r)} />)}
+        {!rows.length && <div className="text-center text-stone-500 py-16">결과가 없습니다.</div>}
+      </div>
+      <SearchBtn onSearch={onSearch} />
+    </div>
+  );
+}
+
+function FacetList({ kind, date, sel, crumb, onBack, onPick, onSearch }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true; setLoading(true);
+    fetch(`/api/list?${qs({ date, ...sel, size: 10, page: 0 })}`)
+      .then((r) => r.json())
+      .then((j) => alive && setData(j))
+      .catch(() => alive && setData({ error: true }))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [date, sel.mclsf, sel.sclsf, sel.vrty, sel.market]);
+
+  const list = kind === "market" ? data?.markets : data?.corps;
+  const allLabel = kind === "market" ? "전체 도매시장" : "전체 법인";
+  const allN = kind === "market" ? sum(data?.markets) : sum(data?.corps);
+
+  return (
+    <div className="pb-24">
+      <TopBar crumb={crumb} onBack={onBack} />
+      <div className="px-4 pt-3 pb-2 text-base font-bold text-emerald-300">
+        {kind === "market" ? "도매시장을 고르세요" : "도매법인을 고르세요"}
+      </div>
+      {loading && <div className="flex justify-center py-16"><Loader2 className="animate-spin text-stone-500" /></div>}
+      {!loading && (
+        <div>
+          <Row nm={allLabel} n={allN} bold onClick={() => onPick({ all: true })} />
+          {(list || []).map((r) => <Row key={r.nm} nm={r.nm} n={r.n} onClick={() => onPick(r)} />)}
+          {!list?.length && <div className="text-center text-stone-500 py-16">해당 조건 데이터가 없습니다.</div>}
+        </div>
+      )}
+      <SearchBtn onSearch={onSearch} />
+    </div>
+  );
+}
+
+function Result({ date, sel, setSel, onBack }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const [items, setItems] = useState([]);
+  const size = 50;
+
+  useEffect(() => { setPage(0); setItems([]); }, [sel.origin, sel.unit, sel.market, sel.corp, sel.vrty, sel.sclsf, date]);
+
+  useEffect(() => {
+    let alive = true; setLoading(true);
+    fetch(`/api/list?${qs({ date, ...sel, size, page })}`)
+      .then((r) => r.json())
+      .then((j) => { if (!alive) return; setData(j); setItems((prev) => page === 0 ? (j.items || []) : [...prev, ...(j.items || [])]); })
+      .catch(() => alive && setData({ error: true }))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [date, sel.mclsf, sel.sclsf, sel.vrty, sel.market, sel.corp, sel.origin, sel.unit, page]);
+
+  const s = data?.summary;
+  const totalPages = data ? Math.ceil((data.count || 0) / size) : 1;
+  const toggle = (key, val) => setSel((v) => ({ ...v, [key]: v[key] === val ? undefined : val }));
+
+  return (
+    <div className="pb-6">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-stone-800">
+        <button onClick={onBack} className="p-1 text-stone-300"><ChevronLeft size={24} /></button>
+        <span className="text-base font-bold">{data ? `${won(data.count)}건` : "…"}</span>
+      </div>
+      <Crumb text={crumb(sel)} />
+
+      {/* 출하지 칩 */}
+      {data?.origins?.length > 1 && (
+        <ChipRow label="보낸 곳" items={data.origins} active={sel.origin} onTap={(v) => toggle("origin", v)} />
+      )}
+      {/* 규격 칩 */}
+      {data?.units?.length > 1 && (
+        <ChipRow label="규격" items={data.units} active={sel.unit} onTap={(v) => toggle("unit", v)} />
+      )}
+
+      <div className="divide-y divide-stone-800">
+        {items.map((r, i) => (
+          <div key={i} className="px-4 py-3">
+            <div className="flex justify-between items-start">
+              <div className="font-bold text-base">{r.item} <span className="text-emerald-300 text-sm">{r.vrty}</span></div>
+              <div className="text-right">
+                <div className="text-lg font-bold text-red-400 tabular-nums">{won(r.price)}원</div>
+                {r.kgPrice > 0 && <div className="text-xs text-stone-500">kg당 {won(r.kgPrice)}원</div>}
+              </div>
+            </div>
+            <div className="text-sm text-stone-400 mt-1">규격 {r.unit} · 수량 {won(r.qty)}건 · {r.trdSe}</div>
+            <div className="text-sm text-stone-400">보낸 곳 {r.origin || "-"} · {r.mkt} {r.corp}</div>
+            <div className="text-xs text-stone-500 mt-0.5">{r.t} 낙찰</div>
+          </div>
+        ))}
+      </div>
+
+      {loading && <div className="flex justify-center py-6"><Loader2 className="animate-spin text-stone-500" /></div>}
+      {!loading && !items.length && <div className="text-center text-stone-500 py-16">조건에 맞는 낙찰이 없습니다.</div>}
+
+      {!loading && page + 1 < totalPages && (
+        <div className="px-4 py-3">
+          <button onClick={() => setPage((p) => p + 1)} className="w-full bg-emerald-700 text-white font-bold py-3 rounded-full">
+            더 불러오기 ({page + 1}/{totalPages} 페이지)
+          </button>
+        </div>
+      )}
+
+      {s && s.n > 0 && (
+        <div className="mx-4 mt-2 mb-4 bg-stone-900 rounded-xl p-4 text-center">
+          <div className="text-sm text-stone-400">총 {won(s.n)}건</div>
+          <div className="text-base mt-1">건당 평균 <b className="text-white">{won(s.avg)}원</b>
+            {s.kgAvg > 0 && <> · kg당 평균 <b className="text-white">{won(s.kgAvg)}원</b></>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChipRow({ label, items, active, onTap }) {
+  return (
+    <div className="px-3 py-2 border-b border-stone-800">
+      <div className="text-xs text-stone-500 mb-1.5">{label}</div>
+      <div className="flex gap-2 overflow-x-auto">
+        {items.slice(0, 20).map((it) => (
+          <button key={it.nm} onClick={() => onTap(it.nm)}
+            className={`px-3 py-1.5 rounded-full text-sm whitespace-nowrap border ${active === it.nm ? "bg-emerald-600 border-emerald-600 text-white" : "border-stone-700 text-stone-300"}`}>
+            {it.nm} ({won(it.n)})
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function qs(o) {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== "" && !k.endsWith("Nm")) p.set(k, v);
+  return p.toString();
+}
+function sum(arr) { return (arr || []).reduce((a, b) => a + b.n, 0); }
