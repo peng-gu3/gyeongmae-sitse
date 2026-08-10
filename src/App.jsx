@@ -49,11 +49,26 @@ function ItemSearch({ date }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError(""); setPath([]); setShowResults(false);
+    const cacheKey = `auction-categories:${date}`;
+    let hasCache = false;
+    try {
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+      if (cached?.categories?.length) {
+        setCategories(cached.categories);
+        setLoading(false);
+        hasCache = true;
+      }
+    } catch { /* ignore an invalid browser cache */ }
+    if (!hasCache) setLoading(true);
+    setError(""); setPath([]); setShowResults(false);
     fetch(`/api/categories?date=${encodeURIComponent(date)}`, { signal: controller.signal })
-      .then(readJson).then((data) => setCategories(data.categories || []))
-      .catch((e) => e.name !== "AbortError" && setError(e.message))
-      .finally(() => setLoading(false));
+      .then(readJson).then((data) => {
+        const nextCategories = data.categories || [];
+        setCategories(nextCategories);
+        try { localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), categories: nextCategories })); } catch { /* storage can be unavailable */ }
+      })
+      .catch((e) => e.name !== "AbortError" && !hasCache && setError(e.message))
+      .finally(() => { if (!hasCache) setLoading(false); });
     return () => controller.abort();
   }, [date]);
 
