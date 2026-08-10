@@ -5,7 +5,10 @@ const SELECT = "gds_lclsf_cd,gds_lclsf_nm,gds_mclsf_cd,gds_mclsf_nm,gds_sclsf_cd
 export default async function handler(req, res) {
   try {
     const date = String(req.query.date || kstToday());
-    const { total, rows } = await fetchAll({ ...dateCondition(date), selectable: SELECT });
+    const params = { ...dateCondition(date), selectable: SELECT };
+    const lclsfName = String(req.query.lclsfName || "").trim();
+    if (lclsfName) params["cond[gds_lclsf_nm::EQ]"] = lclsfName;
+    const { total, rows } = await fetchAll(params);
     const large = new Map();
 
     for (const row of rows) {
